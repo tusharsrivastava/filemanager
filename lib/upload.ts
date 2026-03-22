@@ -14,6 +14,10 @@ async function getChunkSize(): Promise<number> {
   return _chunkSize!;
 }
 
+// Number of chunks sent concurrently. The final chunk is always sent last
+// (sequentially) because the server triggers file assembly when it receives it.
+const CONCURRENCY = 4;
+
 export async function uploadChunked(
   file: File,
   destDir: string,
@@ -24,12 +28,16 @@ export async function uploadChunked(
   const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
   const filename = file.name;
 
-  for (let i = 0; i < totalChunks; i++) {
-    if (signal?.aborted) throw new Error("Upload aborted");
+  // Unique ID for this upload session so the server uses a dedicated temp dir.
+  // Prevents chunk collisions between concurrent uploads of the same filename
+  // and ensures a clean temp dir on every retry.
+  const uploadId = crypto.randomUUID();
+
+  async function sendChunk(i: number, abortSignal: AbortSignal): Promise<void> {
+    if (abortSignal.aborted) throw new Error("Upload aborted");
 
     const start = i * CHUNK_SIZE;
-    const end = Math.min(start + CHUNK_SIZE, file.size);
-    const chunk = file.slice(start, end);
+    const chunk = file.slice(start, Math.min(start + CHUNK_SIZE, file.size));
 
     const form = new FormData();
     form.append("file", chunk);
@@ -37,20 +45,55 @@ export async function uploadChunked(
     form.append("filename", filename);
     form.append("chunkIndex", String(i));
     form.append("totalChunks", String(totalChunks));
+    form.append("uploadId", uploadId);
 
-    const res = await fetch("/api/files/upload", {
-      method: "POST",
-      body: form,
-      signal,
-    });
-
+    const res = await fetch("/api/files/upload", { method: "POST", body: form, signal: abortSignal });
     if (!res.ok) {
       const { error } = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(error ?? "Upload failed");
     }
-
-    onProgress(Math.round(((i + 1) / totalChunks) * 100));
   }
+
+  // Combine the caller's abort signal with an internal one so we can cancel
+  // remaining workers the moment any single chunk fails.
+  const workerAbort = new AbortController();
+  const workerSignal = signal
+    ? AbortSignal.any([signal, workerAbort.signal])
+    : workerAbort.signal;
+
+  if (totalChunks === 1) {
+    await sendChunk(0, workerSignal);
+    onProgress(100);
+    return;
+  }
+
+  // Send all chunks except the last in parallel (sliding window).
+  // The final chunk must arrive last so the server can safely assemble all chunks.
+  let completed = 0;
+  const queue = Array.from({ length: totalChunks - 1 }, (_, i) => i);
+
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+        while (queue.length > 0) {
+          if (workerSignal.aborted) break;
+          const i = queue.shift()!;
+          await sendChunk(i, workerSignal);
+          completed++;
+          onProgress(Math.round((completed / totalChunks) * 100));
+        }
+      })
+    );
+  } catch (err) {
+    // Abort remaining workers so they don't keep sending chunks after a failure,
+    // which would leave the server temp dir in an unpredictable partial state.
+    workerAbort.abort();
+    throw err;
+  }
+
+  // Send the final chunk to trigger server-side assembly.
+  await sendChunk(totalChunks - 1, workerSignal);
+  onProgress(100);
 }
 
 export function formatBytes(bytes: number): string {
