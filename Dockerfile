@@ -1,13 +1,18 @@
 # syntax=docker/dockerfile:1
 
+# deps and builder run on the BUILD host platform (native amd64 on GitHub Actions).
+# npm ci and next build are CPU-intensive — running them under QEMU emulation for
+# arm64 is extremely slow. Next.js standalone output is pure JS, so the compiled
+# artefacts are platform-agnostic and can be copied into the arm64 runtime image.
+
 # ── Stage 1: deps ────────────────────────────────────────────────────────────
-FROM node:22-alpine AS deps
+FROM --platform=$BUILDPLATFORM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --frozen-lockfile
+RUN npm ci
 
 # ── Stage 2: builder ─────────────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -16,7 +21,7 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-# ── Stage 3: runner ──────────────────────────────────────────────────────────
+# ── Stage 3: runner (uses $TARGETPLATFORM — the actual arm64/amd64 image) ────
 FROM node:22-alpine AS runner
 WORKDIR /app
 
