@@ -6,9 +6,9 @@ export async function uploadFile(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const form = new FormData();
-    form.append("file", file);
     form.append("path", destDir);
     form.append("filename", file.name);
+    form.append("file", file); // must be last so fields are parsed before the file stream
 
     const xhr = new XMLHttpRequest();
 

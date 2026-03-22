@@ -1,42 +1,78 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs/promises";
+import { createWriteStream } from "fs";
+import { mkdir } from "fs/promises";
+import { Readable } from "stream";
 import path from "path";
+import busboy from "busboy";
 import { resolveSafe, ensureRootExists } from "@/lib/fs";
+
+export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   await ensureRootExists();
 
-  const form = await req.formData();
-  const file = form.get("file") as File | null;
-  const clientDir = form.get("path") as string | null;
-  const filename = form.get("filename") as string | null;
+  return new Promise<NextResponse>((resolve) => {
+    const bb = busboy({ headers: Object.fromEntries(req.headers) });
 
-  if (!file || !clientDir || !filename) {
-    return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
-  }
+    let clientDir: string | null = null;
+    let filename: string | null = null;
 
-  // Sanitise filename: strip path separators so clients cannot write outside target dir
-  const safeName = path.basename(filename);
-  if (!safeName) return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
+    bb.on("field", (name, value) => {
+      if (name === "path") clientDir = value;
+      if (name === "filename") filename = value;
+    });
 
-  try {
-    const destDir = resolveSafe(clientDir);
-    await fs.mkdir(destDir, { recursive: true });
+    bb.on("file", (_fieldname, fileStream, _info) => {
+      const safeName = filename ? path.basename(filename) : null;
 
-    const destPath = path.join(destDir, safeName);
-    const buffer = Buffer.from(await file.arrayBuffer());
-    await fs.writeFile(destPath, buffer);
+      if (!safeName || !clientDir) {
+        fileStream.resume();
+        resolve(NextResponse.json({ error: "Missing required fields" }, { status: 400 }));
+        return;
+      }
 
-    console.log(`[upload] ${safeName} → ${destPath}`);
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[upload] ${msg}`);
-    if (msg.startsWith("[CRITICAL]")) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
+      let destDir: string;
+      try {
+        destDir = resolveSafe(clientDir);
+      } catch (err) {
+        fileStream.resume();
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[upload] ${msg}`);
+        resolve(NextResponse.json({ error: "Forbidden" }, { status: 403 }));
+        return;
+      }
+
+      mkdir(destDir, { recursive: true })
+        .then(() => {
+          const destPath = path.join(destDir, safeName);
+          const writeStream = createWriteStream(destPath);
+
+          fileStream.pipe(writeStream);
+
+          writeStream.on("finish", () => {
+            console.log(`[upload] ${safeName} → ${destPath}`);
+            resolve(NextResponse.json({ ok: true }));
+          });
+
+          writeStream.on("error", (err) => {
+            console.error(`[upload] write error: ${err.message}`);
+            resolve(NextResponse.json({ error: err.message }, { status: 500 }));
+          });
+        })
+        .catch((err) => {
+          fileStream.resume();
+          console.error(`[upload] mkdir error: ${err.message}`);
+          resolve(NextResponse.json({ error: err.message }, { status: 500 }));
+        });
+    });
+
+    bb.on("error", (err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[upload] busboy error: ${msg}`);
+      resolve(NextResponse.json({ error: msg }, { status: 500 }));
+    });
+
+    Readable.fromWeb(req.body as import("stream/web").ReadableStream).pipe(bb);
+  });
 }
-
-export const maxDuration = 300;

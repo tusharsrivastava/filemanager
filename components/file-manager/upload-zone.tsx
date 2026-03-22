@@ -29,13 +29,22 @@ export function UploadZone({ onFiles, children }: UploadZoneProps) {
         } else if (entry.isDirectory) {
           const dirEntry = entry as FileSystemDirectoryEntry;
           const reader = dirEntry.createReader();
+          const allEntries: FileSystemEntry[] = [];
           await new Promise<void>((resolve) => {
-            reader.readEntries(async (entries) => {
-              for (const e of entries) {
-                await traverseEntry(e, `${basePath}${dirEntry.name}/`);
-              }
-              resolve();
-            });
+            function readBatch() {
+              reader.readEntries(async (batch) => {
+                if (batch.length === 0) {
+                  for (const e of allEntries) {
+                    await traverseEntry(e, `${basePath}${dirEntry.name}/`);
+                  }
+                  resolve();
+                } else {
+                  allEntries.push(...batch);
+                  readBatch();
+                }
+              });
+            }
+            readBatch();
           });
         }
       }
