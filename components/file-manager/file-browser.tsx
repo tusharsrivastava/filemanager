@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem,
   ContextMenuSeparator, ContextMenuTrigger,
@@ -29,12 +30,19 @@ import type { FileEntry, UploadItem } from "@/lib/types";
 let uploadCounter = 0;
 
 export function FileBrowser() {
-  const [currentPath, setCurrentPath] = useState("/");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialPathRef = useRef(searchParams.get("path") ?? "/");
+
+  const [currentPath, setCurrentPath] = useState(initialPathRef.current);
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [uploadMinimized, setUploadMinimized] = useState(false);
+  const abortControllers = useRef<Map<string, AbortController>>(new Map());
+  const cancelledIds = useRef<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<FileEntry | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
@@ -59,7 +67,13 @@ export function FileBrowser() {
     }
   }, []);
 
-  useEffect(() => { fetchDir("/"); }, [fetchDir]);
+  useEffect(() => { fetchDir(initialPathRef.current); }, [fetchDir]);
+
+  // Sync current path into URL so refresh restores the same directory
+  useEffect(() => {
+    const qs = currentPath !== "/" ? `?path=${encodeURIComponent(currentPath)}` : "";
+    router.replace(`/${qs}`, { scroll: false });
+  }, [currentPath, router]);
 
   // ── Navigation ───────────────────────────────────────────────────────────
   const navigate = (entry: FileEntry) => {
@@ -179,9 +193,18 @@ export function FileBrowser() {
       });
 
       setUploads((prev) => [...prev, ...newItems]);
+      setUploadMinimized(false);
 
       // Upload sequentially to avoid overwhelming the server
       for (const item of newItems) {
+        if (cancelledIds.current.has(item.id)) {
+          cancelledIds.current.delete(item.id);
+          continue;
+        }
+
+        const controller = new AbortController();
+        abortControllers.current.set(item.id, controller);
+
         setUploads((prev) =>
           prev.map((u) => (u.id === item.id ? { ...u, status: "uploading" } : u))
         );
@@ -190,13 +213,16 @@ export function FileBrowser() {
             setUploads((prev) =>
               prev.map((u) => (u.id === item.id ? { ...u, progress: pct } : u))
             );
-          });
+          }, controller.signal);
+          abortControllers.current.delete(item.id);
           setUploads((prev) =>
             prev.map((u) => (u.id === item.id ? { ...u, status: "done", progress: 100 } : u))
           );
           toast.success(`Uploaded ${item.file.name}`);
         } catch (e) {
+          abortControllers.current.delete(item.id);
           const msg = e instanceof Error ? e.message : String(e);
+          if (msg === "Upload aborted") continue;
           setUploads((prev) =>
             prev.map((u) => (u.id === item.id ? { ...u, status: "error", error: msg } : u))
           );
@@ -212,6 +238,13 @@ export function FileBrowser() {
 
   const dismissUpload = (id: string) =>
     setUploads((prev) => prev.filter((u) => u.id !== id));
+
+  const cancelUpload = (id: string) => {
+    cancelledIds.current.add(id);
+    abortControllers.current.get(id)?.abort();
+    abortControllers.current.delete(id);
+    setUploads((prev) => prev.filter((u) => u.id !== id));
+  };
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -262,6 +295,8 @@ export function FileBrowser() {
         onDelete={() => handleDelete()}
         onRefresh={() => fetchDir(currentPath)}
         onToggleHidden={() => setShowHidden((v) => !v)}
+        activeUploadCount={uploadMinimized ? uploads.filter((u) => u.status === "pending" || u.status === "uploading").length : undefined}
+        onShowUploads={uploadMinimized ? () => setUploadMinimized(false) : undefined}
       />
 
       {/* File list */}
@@ -394,7 +429,13 @@ export function FileBrowser() {
       />
 
       {/* Upload queue overlay */}
-      <UploadQueue items={uploads} onDismiss={dismissUpload} />
+      <UploadQueue
+        items={uploads}
+        minimized={uploadMinimized}
+        onDismiss={dismissUpload}
+        onCancel={cancelUpload}
+        onMinimize={() => setUploadMinimized(true)}
+      />
     </div>
   );
 }

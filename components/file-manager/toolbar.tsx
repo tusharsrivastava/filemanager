@@ -15,6 +15,8 @@ interface ToolbarProps {
   onDelete: () => void;
   onRefresh: () => void;
   onToggleHidden: () => void;
+  activeUploadCount?: number;
+  onShowUploads?: () => void;
 }
 
 export function Toolbar({
@@ -25,6 +27,8 @@ export function Toolbar({
   onDelete,
   onRefresh,
   onToggleHidden,
+  activeUploadCount,
+  onShowUploads,
 }: ToolbarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -86,6 +90,13 @@ export function Toolbar({
       />
 
       <div className="flex-1" />
+
+      {activeUploadCount !== undefined && activeUploadCount > 0 && onShowUploads && (
+        <Button variant="ghost" size="sm" onClick={onShowUploads} className="gap-1.5">
+          <Upload className="h-4 w-4" />
+          <span className="text-xs">{activeUploadCount}</span>
+        </Button>
+      )}
 
       {selectedCount > 0 && (
         <>
