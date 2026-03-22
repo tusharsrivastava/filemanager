@@ -1,6 +1,13 @@
-# Persistent Volume Claim — bind to your existing Jellyfin media PVC
-# or create a fresh one here. Adjust storageClassName to match your homelab
-# (e.g., local-path, nfs-client, longhorn, openebs-hostpath).
+# Persistent Volume Claim for filemanager.
+# storageClassName: use "longhorn" for Longhorn, "local-path" for Rancher local-path, etc.
+#
+# accessModes: ReadWriteOnce (RWO) is strongly preferred with Longhorn.
+# Longhorn implements RWX via an NFS share-manager pod, adding a full network
+# hop on every write and dramatically reducing throughput vs RWO (direct iSCSI).
+# Since filemanager runs as a single replica, RWO is sufficient.
+#
+# NOTE: access mode cannot be changed on an existing PVC — you must delete and
+# recreate it (backup data first).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -10,8 +17,8 @@ metadata:
     app: filemanager
 spec:
   accessModes:
-    - ReadWriteMany # RWX if your storage supports it; else ReadWriteOnce
-  storageClassName: local-path # ← change to your storage class
+    - ReadWriteOnce
+  storageClassName: longhorn # ← adjust to your storage class
   resources:
     requests:
       storage: 100Gi # ← adjust to your media volume size
