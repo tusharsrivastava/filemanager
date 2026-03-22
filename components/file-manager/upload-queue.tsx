@@ -14,10 +14,41 @@ interface UploadQueueProps {
   onDismiss: (id: string) => void;
   onCancel: (id: string) => void;
   onMinimize: () => void;
+  onMaximize: () => void;
 }
 
-export function UploadQueue({ items, minimized, onDismiss, onCancel, onMinimize }: UploadQueueProps) {
-  if (items.length === 0 || minimized) return null;
+export function UploadQueue({ items, minimized, onDismiss, onCancel, onMinimize, onMaximize }: UploadQueueProps) {
+  if (items.length === 0) return null;
+
+  if (minimized) {
+    const active = items.filter((i) => i.status === "pending" || i.status === "uploading");
+    if (active.length === 0) return null;
+
+    const totalBytes = items.reduce((sum, i) => sum + i.file.size, 0);
+    const uploadedBytes = items.reduce((sum, i) => {
+      if (i.status === "done") return sum + i.file.size;
+      if (i.status === "uploading") return sum + (i.file.size * i.progress) / 100;
+      return sum;
+    }, 0);
+    const overallProgress = totalBytes > 0 ? Math.round((uploadedBytes / totalBytes) * 100) : 0;
+
+    return (
+      <div
+        className="fixed top-4 right-4 z-50 w-64 rounded-xl border bg-card shadow-xl px-3 py-2.5 cursor-pointer hover:bg-accent transition-colors"
+        onClick={onMaximize}
+        title="Click to expand"
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-1.5">
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+            <span className="text-xs font-medium">{active.length} uploading</span>
+          </div>
+          <span className="text-xs text-muted-foreground">{overallProgress}%</span>
+        </div>
+        <Progress value={overallProgress} className="h-1" />
+      </div>
+    );
+  }
 
   const active = items.filter((i) => i.status === "pending" || i.status === "uploading");
 

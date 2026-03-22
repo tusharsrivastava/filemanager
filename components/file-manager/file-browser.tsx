@@ -435,6 +435,7 @@ export function FileBrowser() {
         onDismiss={dismissUpload}
         onCancel={cancelUpload}
         onMinimize={() => setUploadMinimized(true)}
+        onMaximize={() => setUploadMinimized(false)}
       />
     </div>
   );
