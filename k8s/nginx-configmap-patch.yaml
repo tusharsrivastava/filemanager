@@ -1,15 +1,6 @@
 # Patches the NGINX Inc. Ingress Controller's global ConfigMap.
 # Apply this if uploads still return 413 despite the per-ingress annotation.
 #
-# IMPORTANT — keep client-max-body-size in sync with CHUNK_SIZE in deployment.yaml.
-# Each upload request carries one chunk + multipart form overhead (~1 KiB).
-# client-max-body-size must be >= CHUNK_SIZE + overhead, or set to "0" (unlimited).
-#
-#   CHUNK_SIZE (deployment.yaml)  →  client-max-body-size (here + ingress.yaml)
-#   10 MiB  (10485760)            →  "11m"   (current default, 1 MiB headroom)
-#   25 MiB  (26214400)            →  "26m"
-#   "0" / unlimited               →  "0"
-#
 # The controller ConfigMap is usually in the nginx-ingress namespace.
 # Confirm with: kubectl get configmap -n nginx-ingress
 #
@@ -20,16 +11,14 @@
 #   kubectl patch configmap nginx-config \
 #     -n nginx-ingress \
 #     --type merge \
-#     -p '{"data":{"client-max-body-size":"11m","proxy-read-timeout":"600","proxy-send-timeout":"600","proxy-connect-timeout":"600","proxy-request-buffering":"False","proxy-buffering":"False"}}'
+#     -p '{"data":{"client-max-body-size":"0","proxy-read-timeout":"600","proxy-send-timeout":"600","proxy-connect-timeout":"600","proxy-request-buffering":"False","proxy-buffering":"False"}}'
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: nginx-config # ← default name; check yours with kubectl get configmap -n nginx-ingress
   namespace: nginx-ingress # ← default namespace for the NGINX Inc. ingress controller
 data:
-  # 11m = 10 MiB chunk + 1 MiB headroom for multipart form overhead.
-  # Increase proportionally if you raise CHUNK_SIZE in deployment.yaml.
-  client-max-body-size: "100m"
+  client-max-body-size: "0" # unlimited — full files are streamed, no size cap
   proxy-read-timeout: "600"
   proxy-send-timeout: "600"
   proxy-connect-timeout: "600"

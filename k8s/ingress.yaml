@@ -6,12 +6,9 @@ metadata:
   name: filemanager
   namespace: filemanager
   annotations:
-    # Must be >= CHUNK_SIZE (deployment.yaml) + multipart overhead (~1 MiB).
-    # Current default: CHUNK_SIZE=10 MiB → client-max-body-size=11m (1 MiB headroom).
-    # If you raise CHUNK_SIZE, raise this value proportionally.
-    # Set to "0" for unlimited (requires client_max_body_size 0 at every
-    # nginx layer including any external reverse proxy).
-    nginx.org/client-max-body-size: "100m"
+    # "0" = unlimited — required for large file uploads (movies, ISOs, etc.).
+    # Validate upload size in the application layer if needed.
+    nginx.org/client-max-body-size: "0"
     nginx.org/proxy-read-timeout: "600"
     nginx.org/proxy-send-timeout: "600"
     nginx.org/proxy-connect-timeout: "600"
