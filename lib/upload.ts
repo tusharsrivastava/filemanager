@@ -1,10 +1,18 @@
-// Chunk size for uploads.
-// nginx's default client_max_body_size is 1 MiB. Multipart form encoding
-// adds ~500 bytes of overhead per chunk, so we stay well under that limit.
-// If you have configured nginx with client_max_body_size 0 (unlimited) at
-// every layer (ingress + any external proxy), you can increase this via the
-// NEXT_PUBLIC_CHUNK_SIZE env var (bytes). Example: 10485760 = 10 MiB.
-const CHUNK_SIZE = Number(process.env.NEXT_PUBLIC_CHUNK_SIZE) || 512 * 1024;
+// Chunk size is fetched from /api/config at runtime so it can be changed
+// via the CHUNK_SIZE k8s env var without rebuilding the image.
+let _chunkSize: number | null = null;
+
+async function getChunkSize(): Promise<number> {
+  if (_chunkSize !== null) return _chunkSize;
+  try {
+    const res = await fetch("/api/config");
+    const { chunkSize } = await res.json();
+    _chunkSize = chunkSize;
+  } catch {
+    _chunkSize = 512 * 1024; // fallback: 512 KiB
+  }
+  return _chunkSize!;
+}
 
 export async function uploadChunked(
   file: File,
@@ -12,6 +20,7 @@ export async function uploadChunked(
   onProgress: (pct: number) => void,
   signal?: AbortSignal
 ): Promise<void> {
+  const CHUNK_SIZE = await getChunkSize();
   const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
   const filename = file.name;
 
