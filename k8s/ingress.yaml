@@ -6,10 +6,13 @@ metadata:
   name: filemanager
   namespace: filemanager
   annotations:
-    # nginx example — change to traefik/haproxy annotation if needed
-    nginx.ingress.kubernetes.io/proxy-body-size: "0" # no limit — needed for large uploads
+    # "0" = unlimited in nginx (client_max_body_size 0).
+    # If uploads still return 413, also apply k8s/nginx-configmap-patch.yaml
+    # to override the controller's global default.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
 spec:
   ingressClassName: nginx # ← change to your ingress class
   rules:
