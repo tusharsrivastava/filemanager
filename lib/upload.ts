@@ -31,7 +31,13 @@ export async function uploadChunked(
   // Unique ID for this upload session so the server uses a dedicated temp dir.
   // Prevents chunk collisions between concurrent uploads of the same filename
   // and ensures a clean temp dir on every retry.
-  const uploadId = crypto.randomUUID();
+  // crypto.randomUUID() requires a secure context (HTTPS); fall back to a
+  // Math.random-based UUID for plain-HTTP home-network deployments.
+  const uploadId = crypto.randomUUID?.() ??
+    "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+    });
 
   async function sendChunk(i: number, abortSignal: AbortSignal): Promise<void> {
     if (abortSignal.aborted) throw new Error("Upload aborted");
