@@ -11,14 +11,13 @@ metadata:
     # If you raise CHUNK_SIZE, raise this value proportionally.
     # Set to "0" for unlimited (requires client_max_body_size 0 at every
     # nginx layer including any external reverse proxy).
-    #
-    # NOTE: nginx.org/client-max-body-size is for the NGINX Inc. controller (nginx.com / F5).
-    # If you use the community ingress-nginx controller, use:
-    #   nginx.ingress.kubernetes.io/proxy-body-size: "11m"
-    nginx.org/client-max-body-size: "11m"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+    nginx.org/client-max-body-size: "100m"
+    nginx.org/proxy-read-timeout: "600"
+    nginx.org/proxy-send-timeout: "600"
+    nginx.org/proxy-connect-timeout: "600"
+    nginx.org/location-snippets: |
+      proxy_request_buffering off;
+      proxy_buffering off;
 spec:
   ingressClassName: nginx # ← change to your ingress class
   rules:
