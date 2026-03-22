@@ -1,0 +1,25 @@
+# Optional ingress — adjust to your ingress controller (nginx, traefik, etc.)
+# Remove if you prefer NodePort or LoadBalancer.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: filemanager
+  namespace: filemanager
+  annotations:
+    # nginx example — change to traefik/haproxy annotation if needed
+    nginx.ingress.kubernetes.io/proxy-body-size: "0" # no limit — needed for large uploads
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx # ← change to your ingress class
+  rules:
+    - host: filemanager.local # ← change to your hostname / local DNS entry
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: filemanager
+                port:
+                  name: http

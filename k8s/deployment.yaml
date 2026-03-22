@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: filemanager
+  namespace: filemanager
+  labels:
+    app: filemanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: filemanager
+  template:
+    metadata:
+      namespace: filemanager
+      labels:
+        app: filemanager
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001 # ensures mounted volume is writable by nextjs user
+
+      containers:
+        - name: filemanager
+          image: ghcr.io/tusharsrivastava/filemanager:latest # ← update after pushing image
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+
+          env:
+            - name: MOUNT_PATH
+              value: /data # path inside container where PVC is mounted
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          volumeMounts:
+            - name: media
+              mountPath: /data
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: filemanager-media-pvc # ← or use your existing Jellyfin PVC name
