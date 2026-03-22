@@ -51,19 +51,27 @@ export async function POST(req: NextRequest) {
     // If last chunk, assemble
     if (chunkIndex === totalChunks - 1) {
       const finalPath = path.join(destDir, safeName);
-      const writeStream = await fs.open(finalPath, "w");
 
-      for (let i = 0; i < totalChunks; i++) {
-        const cp = path.join(tmpDir, `chunk-${i}`);
-        const data = await fs.readFile(cp);
-        await writeStream.write(data);
+      try {
+        // Remove a pre-existing file so we don't inherit its permissions
+        await fs.unlink(finalPath).catch(() => {});
+
+        const writeStream = await fs.open(finalPath, "w");
+        try {
+          for (let i = 0; i < totalChunks; i++) {
+            const cp = path.join(tmpDir, `chunk-${i}`);
+            const data = await fs.readFile(cp);
+            await writeStream.write(data);
+          }
+        } finally {
+          await writeStream.close();
+        }
+      } finally {
+        // Always clean up tmp chunks
+        await fs.rm(tmpDir, { recursive: true, force: true });
       }
-      await writeStream.close();
 
-      // Cleanup tmp
-      await fs.rm(tmpDir, { recursive: true, force: true });
       console.log(`[upload] ${safeName} assembled successfully → ${finalPath}`);
-
       return NextResponse.json({ ok: true, done: true });
     }
 
