@@ -24,7 +24,7 @@ import { UploadZone } from "./upload-zone";
 import { UploadQueue } from "./upload-queue";
 import { RenameDialog } from "./rename-dialog";
 import { NewFolderDialog } from "./new-folder-dialog";
-import { uploadChunked, formatBytes, formatDate } from "@/lib/upload";
+import { uploadFile, formatBytes, formatDate } from "@/lib/upload";
 import type { FileEntry, UploadItem } from "@/lib/types";
 
 let uploadCounter = 0;
@@ -209,7 +209,7 @@ export function FileBrowser() {
           prev.map((u) => (u.id === item.id ? { ...u, status: "uploading" } : u))
         );
         try {
-          await uploadChunked(item.file, item.destDir, (pct) => {
+          await uploadFile(item.file, item.destDir, (pct) => {
             setUploads((prev) =>
               prev.map((u) => (u.id === item.id ? { ...u, progress: pct } : u))
             );
