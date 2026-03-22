@@ -19,8 +19,9 @@ A simple web-based file manager for Kubernetes homelabs. Mounts to a Persistent 
 - Browse files and folders on a PVC-mounted volume
 - Create, rename, and delete files and folders
 - Upload single files, multiple files, or entire folder trees
-- Chunked file transfer (4 MB chunks) for reliable large-file uploads
-- Drag-and-drop upload with folder structure preservation
+- Streaming file upload — files are piped directly to disk, no in-memory buffering regardless of file size
+- Drag-and-drop upload with folder structure preservation (handles folders with >100 files)
+- Real-time per-file upload progress via XHR
 - Download files directly from the browser
 - File-type-aware icons (video, audio, image, archive, code, etc.)
 - Upload progress queue with per-file status
@@ -35,6 +36,7 @@ A simple web-based file manager for Kubernetes homelabs. Mounts to a Persistent 
 | UI | shadcn/ui + Tailwind CSS |
 | Icons | lucide-react |
 | Notifications | Sonner |
+| Upload parsing | busboy (streaming multipart) |
 | Container | Docker (single image, no sidecar) |
 | Deployment | Kubernetes (Deployment + PVC + Service + Ingress) |
 
@@ -47,32 +49,36 @@ app/api/files/
   rename/route.ts   # POST — rename file or folder
   delete/route.ts   # POST — delete one or more items
   download/route.ts # GET  — stream file download
-  upload/route.ts   # POST — chunked upload endpoint
+  upload/route.ts   # POST — streaming upload (busboy → createWriteStream, no buffering)
 
 components/file-manager/
   file-browser.tsx       # Main component — state, navigation, all operations
   file-icon.tsx          # Type-aware file/folder icons
   toolbar.tsx            # New Folder, Upload, Delete, Refresh actions
   upload-zone.tsx        # Drag-and-drop overlay (files + folder trees)
-  upload-queue.tsx       # Fixed progress panel (bottom-right)
+  upload-queue.tsx       # Fixed progress panel (top-right)
   rename-dialog.tsx      # Rename modal
   new-folder-dialog.tsx  # New folder modal
 
 lib/
   fs.ts       # ROOT_DIR resolution + path traversal guard
-  upload.ts   # Chunked upload helper + formatting utilities
+  upload.ts   # XHR upload helper + formatting utilities
   types.ts    # Shared TypeScript types
 
 k8s/
-  pvc.yaml         # PersistentVolumeClaim
-  deployment.yaml  # Deployment with PVC volume mount
-  service.yaml     # ClusterIP Service
-  ingress.yaml     # Ingress with large-body + timeout annotations
+  namespace.yaml             # filemanager namespace
+  pvc.yaml                   # PersistentVolumeClaim
+  deployment.yaml            # Deployment with PVC volume mount
+  service.yaml               # ClusterIP Service
+  ingress.yaml               # Ingress with unlimited body size + timeout annotations
+  nginx-configmap-patch.yaml # Global nginx ConfigMap patch (proxy buffering + body size)
 ```
 
 ## Configuration
 
-The mount path is controlled by the `MOUNT_PATH` environment variable. Set this in `k8s/deployment.yaml` to match wherever your PVC is mounted inside the container (default: `/data`).
+| Environment Variable | Default | Description |
+|---|---|---|
+| `MOUNT_PATH` | `/data` | Path inside the container where the PVC is mounted |
 
 ## Local Development
 
@@ -92,12 +98,40 @@ docker push ghcr.io/YOUR_USER/filemanager:latest
 
 ## Kubernetes Deployment
 
-1. Edit `k8s/pvc.yaml` — set `storageClassName` and `storage` to match your cluster, or replace `claimName` in the Deployment with your existing Jellyfin PVC name.
-2. Edit `k8s/deployment.yaml` — update the `image:` field and set `MOUNT_PATH` to your media root.
-3. Edit `k8s/ingress.yaml` — set `ingressClassName` and `host` to match your homelab DNS.
+### 1. PVC
+
+Edit `k8s/pvc.yaml` — set `storageClassName` and `storage` to match your cluster.
+
+**Longhorn users:** the PVC uses `ReadWriteOnce` (RWO) by default. Longhorn implements `ReadWriteMany` (RWX) via an NFS share-manager pod which adds significant write overhead. Since this app runs as a single replica, RWO with direct iSCSI gives much better throughput. Only use RWX if you need to share the volume with another pod simultaneously.
+
+### 2. Deployment
+
+Edit `k8s/deployment.yaml`:
+- Update the `image:` field to your registry path
+- Set `MOUNT_PATH` to your media root inside the container
+
+**Resource recommendations:**
+- CPU limit: `1000m` (1 vCPU) — prevents event loop throttling during sustained uploads
+- Memory limit: `512Mi` — sufficient with streaming; upload size does not affect memory usage
+
+### 3. Ingress
+
+Edit `k8s/ingress.yaml` — set `ingressClassName` and `host` to match your homelab DNS.
+
+The ingress sets `nginx.org/client-max-body-size: "0"` (unlimited) and `proxy_request_buffering off`. Both are required for large file uploads to work — without them nginx will reject or buffer the upload before it reaches the app.
+
+If you see 413 errors despite the per-ingress annotation, also apply the global ConfigMap patch:
+
+```bash
+kubectl apply -f k8s/nginx-configmap-patch.yaml
+```
+
+### 4. Apply
 
 ```bash
 kubectl apply -f k8s/
 ```
 
-To share the same volume as Jellyfin, point `claimName` in `deployment.yaml` at your existing Jellyfin PVC and set `MOUNT_PATH` to the same path Jellyfin uses for its media library.
+### Sharing a Jellyfin PVC
+
+To manage files on an existing Jellyfin volume, replace the `claimName` in `deployment.yaml` with your Jellyfin PVC name and set `MOUNT_PATH` to the same path Jellyfin uses for its media library. Use `ReadWriteMany` on the PVC if both pods run on different nodes.
