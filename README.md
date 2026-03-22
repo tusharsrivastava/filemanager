@@ -1,36 +1,103 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# K8s File Manager
 
-## Getting Started
+A simple web-based file manager for Kubernetes homelabs. Mounts to a Persistent Volume Claim (PVC) and provides a browser-based interface for managing files and folders — built primarily for Jellyfin media management.
 
-First, run the development server:
+---
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+> **Disclaimer**
+>
+> This is a **personal homelab project**, generated with the assistance of AI (Claude by Anthropic). It is shared publicly as-is, without any guarantees of correctness, security, or fitness for a particular purpose.
+>
+> **Security vulnerabilities may be present.** This tool has no authentication, no authorization, and exposes direct filesystem access over HTTP. It is designed for use inside a private, trusted network (e.g., a home Kubernetes cluster behind a local ingress) and should **never** be exposed to the public internet.
+>
+> **Use at your own risk.** The author accepts no responsibility for data loss, unauthorized access, or any other issues arising from the use of this software.
+
+---
+
+## Features
+
+- Browse files and folders on a PVC-mounted volume
+- Create, rename, and delete files and folders
+- Upload single files, multiple files, or entire folder trees
+- Chunked file transfer (4 MB chunks) for reliable large-file uploads
+- Drag-and-drop upload with folder structure preservation
+- Download files directly from the browser
+- File-type-aware icons (video, audio, image, archive, code, etc.)
+- Upload progress queue with per-file status
+- Responsive table layout with breadcrumb navigation
+- Right-click context menu for quick actions
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16 (App Router, standalone output) |
+| UI | shadcn/ui + Tailwind CSS |
+| Icons | lucide-react |
+| Notifications | Sonner |
+| Container | Docker (single image, no sidecar) |
+| Deployment | Kubernetes (Deployment + PVC + Service + Ingress) |
+
+## Project Structure
+
+```
+app/api/files/
+  route.ts          # GET  — list directory contents
+  mkdir/route.ts    # POST — create folder
+  rename/route.ts   # POST — rename file or folder
+  delete/route.ts   # POST — delete one or more items
+  download/route.ts # GET  — stream file download
+  upload/route.ts   # POST — chunked upload endpoint
+
+components/file-manager/
+  file-browser.tsx       # Main component — state, navigation, all operations
+  file-icon.tsx          # Type-aware file/folder icons
+  toolbar.tsx            # New Folder, Upload, Delete, Refresh actions
+  upload-zone.tsx        # Drag-and-drop overlay (files + folder trees)
+  upload-queue.tsx       # Fixed progress panel (bottom-right)
+  rename-dialog.tsx      # Rename modal
+  new-folder-dialog.tsx  # New folder modal
+
+lib/
+  fs.ts       # ROOT_DIR resolution + path traversal guard
+  upload.ts   # Chunked upload helper + formatting utilities
+  types.ts    # Shared TypeScript types
+
+k8s/
+  pvc.yaml         # PersistentVolumeClaim
+  deployment.yaml  # Deployment with PVC volume mount
+  service.yaml     # ClusterIP Service
+  ingress.yaml     # Ingress with large-body + timeout annotations
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Configuration
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The mount path is controlled by the `MOUNT_PATH` environment variable. Set this in `k8s/deployment.yaml` to match wherever your PVC is mounted inside the container (default: `/data`).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Local Development
 
-## Learn More
+```bash
+npm install
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Open [http://localhost:3000](http://localhost:3000). Files will be served from `./data` in the project root (created automatically).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Docker Build
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+docker build -t ghcr.io/YOUR_USER/filemanager:latest .
+docker push ghcr.io/YOUR_USER/filemanager:latest
+```
 
-## Deploy on Vercel
+## Kubernetes Deployment
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. Edit `k8s/pvc.yaml` — set `storageClassName` and `storage` to match your cluster, or replace `claimName` in the Deployment with your existing Jellyfin PVC name.
+2. Edit `k8s/deployment.yaml` — update the `image:` field and set `MOUNT_PATH` to your media root.
+3. Edit `k8s/ingress.yaml` — set `ingressClassName` and `host` to match your homelab DNS.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+kubectl apply -f k8s/
+```
+
+To share the same volume as Jellyfin, point `claimName` in `deployment.yaml` at your existing Jellyfin PVC and set `MOUNT_PATH` to the same path Jellyfin uses for its media library.
