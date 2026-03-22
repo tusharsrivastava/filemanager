@@ -97,9 +97,35 @@ export async function uploadChunked(
     throw err;
   }
 
-  // Send the final chunk to trigger server-side assembly.
+  // Send the final chunk to trigger server-side assembly (now async).
   await sendChunk(totalChunks - 1, workerSignal);
+
+  // Poll until the background assembly job completes.
+  await pollAssembly(uploadId, workerSignal);
   onProgress(100);
+}
+
+async function pollAssembly(uploadId: string, signal: AbortSignal): Promise<void> {
+  const POLL_INTERVAL_MS = 1500;
+
+  while (true) {
+    if (signal.aborted) throw new Error("Upload aborted");
+
+    const res = await fetch(`/api/files/upload/status/${uploadId}`, { signal });
+    if (!res.ok) throw new Error(`Assembly status check failed: ${res.statusText}`);
+
+    const { status, error } = await res.json();
+
+    if (status === "done") return;
+    if (status === "error") throw new Error(error ?? "Assembly failed");
+
+    // Still assembling — wait before polling again.
+    await new Promise<void>((resolve, reject) => {
+      if (signal.aborted) return reject(new Error("Upload aborted"));
+      const id = setTimeout(resolve, POLL_INTERVAL_MS);
+      signal.addEventListener("abort", () => { clearTimeout(id); reject(new Error("Upload aborted")); }, { once: true });
+    });
+  }
 }
 
 export function formatBytes(bytes: number): string {

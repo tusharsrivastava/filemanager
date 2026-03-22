@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import { resolveSafe, ensureRootExists } from "@/lib/fs";
+import { createJob, resolveJob } from "@/lib/upload-jobs";
 
 // Chunked upload protocol:
 //   POST multipart/form-data with fields:
@@ -53,38 +54,50 @@ export async function POST(req: NextRequest) {
 
     console.log(`[upload] ${safeName} chunk ${chunkIndex + 1}/${totalChunks}`);
 
-    // If last chunk, assemble
+    // If last chunk, kick off assembly in the background and return immediately.
+    // Assembling a large file synchronously inside the request handler causes
+    // nginx to 502 before the response arrives. after() runs after the response
+    // is sent, keeping the request short regardless of file size.
     if (chunkIndex === totalChunks - 1) {
       const finalPath = path.join(destDir, safeName);
+      createJob(uploadId);
 
-      try {
-        // Remove a pre-existing file so we don't inherit its permissions
-        await fs.unlink(finalPath).catch(() => {});
-
-        const fileHandle = await fs.open(finalPath, "w");
+      after(async () => {
         try {
-          let fileOffset = 0;
-          for (let i = 0; i < totalChunks; i++) {
-            const cp = path.join(tmpDir, `chunk-${i}`);
-            const data = await fs.readFile(cp);
-            // Use explicit position so assembly is correct regardless of any
-            // implicit file-cursor state, and check for partial writes.
-            const { bytesWritten } = await fileHandle.write(data, 0, data.length, fileOffset);
-            if (bytesWritten !== data.length) {
-              throw new Error(`Partial write at chunk ${i}: ${bytesWritten}/${data.length} bytes`);
-            }
-            fileOffset += bytesWritten;
-          }
-        } finally {
-          await fileHandle.close();
-        }
-      } finally {
-        // Always clean up tmp chunks
-        await fs.rm(tmpDir, { recursive: true, force: true });
-      }
+          // Remove a pre-existing file so we don't inherit its permissions
+          await fs.unlink(finalPath).catch(() => {});
 
-      console.log(`[upload] ${safeName} assembled successfully → ${finalPath}`);
-      return NextResponse.json({ ok: true, done: true });
+          const fileHandle = await fs.open(finalPath, "w");
+          try {
+            let fileOffset = 0;
+            for (let i = 0; i < totalChunks; i++) {
+              const cp = path.join(tmpDir, `chunk-${i}`);
+              const data = await fs.readFile(cp);
+              // Use explicit position so assembly is correct regardless of any
+              // implicit file-cursor state, and check for partial writes.
+              const { bytesWritten } = await fileHandle.write(data, 0, data.length, fileOffset);
+              if (bytesWritten !== data.length) {
+                throw new Error(`Partial write at chunk ${i}: ${bytesWritten}/${data.length} bytes`);
+              }
+              fileOffset += bytesWritten;
+            }
+          } finally {
+            await fileHandle.close();
+          }
+
+          console.log(`[upload] ${safeName} assembled successfully → ${finalPath}`);
+          resolveJob(uploadId);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[upload][assemble] ${safeName} failed: ${msg}`);
+          resolveJob(uploadId, msg);
+        } finally {
+          // Always clean up tmp chunks
+          await fs.rm(tmpDir, { recursive: true, force: true });
+        }
+      });
+
+      return NextResponse.json({ ok: true, done: false, assembling: true });
     }
 
     return NextResponse.json({ ok: true, done: false });
@@ -100,5 +113,5 @@ export async function POST(req: NextRequest) {
 
 // App Router route handlers on the Node.js runtime have no imposed body size limit.
 // (bodySizeLimit only applies to Server Actions via next.config serverActions.bodySizeLimit.)
-// maxDuration guards against platform-level timeouts when assembling very large files.
+// maxDuration covers both the request and the after() assembly callback.
 export const maxDuration = 300;
