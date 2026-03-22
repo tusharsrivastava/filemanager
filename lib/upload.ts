@@ -1,5 +1,10 @@
-// Chunked upload helper — 4 MB chunks by default.
-const CHUNK_SIZE = 4 * 1024 * 1024;
+// Chunk size for uploads.
+// nginx's default client_max_body_size is 1 MiB. Multipart form encoding
+// adds ~500 bytes of overhead per chunk, so we stay well under that limit.
+// If you have configured nginx with client_max_body_size 0 (unlimited) at
+// every layer (ingress + any external proxy), you can increase this via the
+// NEXT_PUBLIC_CHUNK_SIZE env var (bytes). Example: 10485760 = 10 MiB.
+const CHUNK_SIZE = Number(process.env.NEXT_PUBLIC_CHUNK_SIZE) || 512 * 1024;
 
 export async function uploadChunked(
   file: File,
